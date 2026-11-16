@@ -59,6 +59,8 @@ export function createWorld(random) {
     bombs: createBombs(),
     powerups: [],
     effects: createEffects(),
+    /** A bomb press held for up to 0.15 s, waiting for a seed to free up. */
+    bombBuffer: 0,
     message: '',
     messageTimer: 0,
     stats: { wallsBroken: 0, enemiesDown: 0, levelBonus: 0 },
@@ -75,6 +77,10 @@ export function createWorld(random) {
       lives: prev ? prev.lives : LIVES,
       invulnerable: PLAYER.respawnInvulnerable,
       faceX: 0, faceY: 1, moving: false,
+      // Velocity, for the acceleration ramp: the sprite eases up to speed
+      // instead of teleporting to full speed, and eases back down on release.
+      vx: 0, vy: 0, prevVx: 0, prevVy: 0,
+      dustTimer: 0, hurtFlash: 0,
     };
   }
 
@@ -92,6 +98,7 @@ export function createWorld(random) {
     state.powerups = [];
     clearBombs(state.bombs);
     clearEffects(state.effects);
+    state.bombBuffer = 0;
     state.message = '';
     state.messageTimer = 0;
   }
@@ -105,6 +112,10 @@ export function createWorld(random) {
     const at = spawnPoint();
     state.player.x = at.x;
     state.player.y = at.y;
+    state.player.vx = 0;
+    state.player.vy = 0;
+    state.player.prevVx = 0;
+    state.player.prevVy = 0;
     state.player.invulnerable = PLAYER.respawnInvulnerable;
   }
 
@@ -124,6 +135,7 @@ export function createWorld(random) {
       return EVENT_SHIELD;
     }
     p.lives -= 1;
+    p.hurtFlash = 0.4;
     burst(state.effects, p.x, p.y, '#ef476f', 22, 200);
     addShake(state.effects, 8);
     if (p.lives <= 0) return gameOver();
@@ -145,18 +157,80 @@ export function createWorld(random) {
     return false;
   }
 
+  /**
+   * Move the player one step with an acceleration ramp: the sprite eases up
+   * to top speed instead of snapping to it, and eases back down when the
+   * stick lets go, so turns feel weighted instead of robotic. Collision is
+   * still axis-separated (wall slide survives), and a diagonal push into a
+   * hedge corner slides the sprite around it instead of snagging.
+   */
   function movePlayer(dt, dir) {
     const p = state.player;
     const len = Math.hypot(dir.x, dir.y);
-    p.moving = len > 0;
-    if (len === 0) return;
-    const nx = dir.x / len;
-    const ny = dir.y / len;
-    p.faceX = nx;
-    p.faceY = ny;
-    const step = p.speed * dt;
-    if (!collides(p.x + nx * step, p.y)) p.x += nx * step;
-    if (!collides(p.x, p.y + ny * step)) p.y += ny * step;
+    const hasInput = len > 0.001;
+    const nx = hasInput ? dir.x / len : 0;
+    const ny = hasInput ? dir.y / len : 0;
+    if (hasInput) {
+      p.faceX = nx;
+      p.faceY = ny;
+    }
+    // Ease the velocity toward the target (full speed, or zero on release).
+    const targetVx = nx * p.speed;
+    const targetVy = ny * p.speed;
+    const rate = hasInput ? PLAYER.accel : PLAYER.decel;
+    const maxDelta = rate * dt;
+    p.vx += Math.max(-maxDelta, Math.min(maxDelta, targetVx - p.vx));
+    p.vy += Math.max(-maxDelta, Math.min(maxDelta, targetVy - p.vy));
+    if (Math.abs(p.vx) < 0.5) p.vx = 0;
+    if (Math.abs(p.vy) < 0.5) p.vy = 0;
+    const speed = Math.hypot(p.vx, p.vy);
+    p.moving = speed > 12;
+
+    // A sharp turn at speed kicks up a little dust at the sprite's feet.
+    if (p.dustTimer > 0) p.dustTimer = Math.max(0, p.dustTimer - dt);
+    const oldSpeed = Math.hypot(p.prevVx, p.prevVy);
+    if (oldSpeed > 90 && p.dustTimer <= 0) {
+      const dot = oldSpeed > 0 && speed > 0
+        ? (p.prevVx * p.vx + p.prevVy * p.vy) / (oldSpeed * speed)
+        : 1;
+      const reversed = dot < -0.2;
+      const skidded = speed < 30;
+      if (reversed || skidded) {
+        burst(state.effects, p.x, p.y + 12, '#d8c9a3', 6, 70, 0.4, 3);
+        p.dustTimer = 0.3;
+      }
+    }
+    p.prevVx = p.vx;
+    p.prevVy = p.vy;
+
+    const stepX = p.vx * dt;
+    const stepY = p.vy * dt;
+    // X axis, with a sideways nudge when a diagonal push snags a corner.
+    if (stepX !== 0) {
+      if (!collides(p.x + stepX, p.y)) {
+        p.x += stepX;
+      } else if (ny !== 0) {
+        const assist = PLAYER.cornerAssist;
+        const s = Math.sign(ny);
+        if (!collides(p.x, p.y + s * assist) && !collides(p.x + stepX, p.y + s * assist)) {
+          p.y += s * assist;
+          p.x += stepX;
+        }
+      }
+    }
+    // Y axis, same assist in the other direction.
+    if (stepY !== 0) {
+      if (!collides(p.x, p.y + stepY)) {
+        p.y += stepY;
+      } else if (nx !== 0) {
+        const assist = PLAYER.cornerAssist;
+        const s = Math.sign(nx);
+        if (!collides(p.x + s * assist, p.y) && !collides(p.x + s * assist, p.y + stepY)) {
+          p.x += s * assist;
+          p.y += stepY;
+        }
+      }
+    }
     // Keep the sprite inside the maze bounds.
     p.x = Math.max(MAZE_X + 20, Math.min(MAZE_X + COLS * TILE - 20, p.x));
     p.y = Math.max(MAZE_Y + 20, Math.min(MAZE_Y + ROWS * TILE - 20, p.y));
@@ -175,6 +249,30 @@ export function createWorld(random) {
     return EVENT_PLANT;
   }
 
+  /** True when the player still has a seed to plant right now. */
+  function seedsFree() {
+    return state.bombs.planted.length < state.player.bombsMax;
+  }
+
+  /**
+   * Plant a seed, or hold the press for up to 0.15 s when every seed is still
+   * ticking: a press a hair before a seed frees still plants once it frees,
+   * instead of being swallowed. The held press is fired from stepPlay, right
+   * after the fuses advance, so it lands the moment a slot opens.
+   */
+  function bufferPlant() {
+    if (!seedsFree()) {
+      state.bombBuffer = 0.15;
+      return EVENT_NONE;
+    }
+    const planted = plantSeed();
+    if (planted & EVENT_PLANT) return planted;
+    // Standing on a cell that cannot take a seed (its own seed, say): hold
+    // the press briefly so it plants once the sprite steps onto open ground.
+    state.bombBuffer = 0.15;
+    return EVENT_NONE;
+  }
+
   /** A burst's hedge-breaking, with the hidden-treat roll, done in one pass. */
   function applyBurst(burstInfo) {
     let events = EVENT_EXPLOSION;
@@ -188,7 +286,10 @@ export function createWorld(random) {
         const type = hidden ?? (random() < 0.3 ? rollHiddenPowerup(random) : null);
         if (type !== null) state.powerups.push(createPowerup(type, cell.c, cell.r));
         const at = cellCenter(cell.c, cell.r);
-        burst(state.effects, at.x, at.y, '#57a75a', 8, 120, 0.5, 4);
+        // Hedge shatter: leafy chunks plus drifting petals, so the break
+        // reads as a little green explosion rather than a flat puff.
+        burst(state.effects, at.x, at.y, '#57a75a', 12, 170, 0.7, 5);
+        petalBurst(state.effects, at.x, at.y, 6);
         popup(state.effects, `+${SCORE.wall}`, at.x, at.y - 10, '#a8c3a5');
       }
       triggerBomb(state.bombs, cell.c, cell.r);
@@ -292,11 +393,27 @@ export function createWorld(random) {
       return gameOver();
     }
     if (state.player.invulnerable > 0) state.player.invulnerable = Math.max(0, state.player.invulnerable - dt);
+    if (state.player.hurtFlash > 0) state.player.hurtFlash = Math.max(0, state.player.hurtFlash - dt);
     movePlayer(dt, dir);
     const pCell = pixelToCell(state.player.x, state.player.y);
     updateEnemies(state.enemies, dt, state.maze.grid, pCell, random);
     const bursts = updateBombs(state.bombs, dt, state.maze.grid);
     for (const burstInfo of bursts) events |= applyBurst(burstInfo);
+    // A bomb press held while every seed was ticking fires the moment a
+    // slot opens — the fuse advanced above, so this sees the freed slot.
+    if (state.bombBuffer > 0) {
+      if (seedsFree()) {
+        const planted = plantSeed();
+        if (planted & EVENT_PLANT) {
+          state.bombBuffer = 0;
+          events |= planted;
+        } else {
+          state.bombBuffer = Math.max(0, state.bombBuffer - dt);
+        }
+      } else {
+        state.bombBuffer = Math.max(0, state.bombBuffer - dt);
+      }
+    }
     events |= checkBlastHits();
     if (state.screen !== 'play') return events;
     events |= checkTouches();
@@ -349,6 +466,8 @@ export function createWorld(random) {
       return EVENT_NONE;
     },
     plantSeed,
+    seedsFree,
+    bufferPlant,
     /** One fixed step. `dir` is the movement direction; returns event flags. */
     step(dt, dir) {
       if (state.screen === 'title') return stepTitle(dt);

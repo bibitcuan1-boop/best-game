@@ -159,8 +159,27 @@ function runGame() {
       }
     }
     if (actions & ACTION_BOMB && screen === SCREEN_PLAY) {
-      const events = world.plantSeed();
+      const events = world.bufferPlant();
       playEvents(events);
+    } else if (actions & ACTION_BOMB) {
+      // Every menu prompt says SPACE: start, play again, next level. A
+      // bomb press off the playfield is that same promise, so it acts as
+      // confirm there instead of being swallowed.
+      if (screen === SCREEN_TITLE || screen === SCREEN_OVER || screen === SCREEN_WIN) startGame();
+      else if (screen === SCREEN_CLEAR) {
+        audio.click();
+        const events = world.nextLevel();
+        if (events & EVENT_WIN) {
+          screen = SCREEN_WIN;
+          playEvents(events);
+        } else {
+          screen = SCREEN_PLAY;
+          announce(`Level ${world.state.levelIndex + 1}, ${world.state.levelName}.`);
+        }
+      } else if (screen === SCREEN_PAUSED) {
+        screen = SCREEN_PLAY;
+        announce('Playing.');
+      }
     }
     if (actions & ACTION_PAUSE) {
       if (screen === SCREEN_PLAY) {

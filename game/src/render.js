@@ -57,9 +57,14 @@ export function createRenderer(canvas) {
   const context = canvas.getContext('2d');
   const view = { scale: 1, x: 0, y: 0, cssScale: 1, cssX: 0, cssY: 0 };
   const fonts = new Map();
+  // The vignette, built once: a soft darkening toward the field's edges.
+  // It is painted in logical coordinates, so one gradient serves every size.
+  let vignette = null;
 
   function resize() {
-    const ratio = window.devicePixelRatio || 1;
+    // Cap the pixel ratio at 2: on phones with a DPR of 3 the canvas would
+    // be 3x the CSS size for no visible gain, and the fill rate triples.
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
     const cssW = window.innerWidth;
     const cssH = window.innerHeight;
     canvas.width = Math.round(cssW * ratio);
@@ -97,6 +102,47 @@ export function createRenderer(canvas) {
     context.beginPath();
     context.arc(x, y, radius, 0, Math.PI * 2);
     context.fill();
+  }
+
+  /** A soft contact shadow under a sprite, so it sits on the grass. */
+  function drawShadow(x, y, rx) {
+    context.save();
+    context.globalAlpha = 0.28;
+    context.fillStyle = '#04120a';
+    context.beginPath();
+    context.ellipse(x, y, rx, rx * 0.32, 0, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
+
+  /**
+   * Ambient pollen and fireflies drifting over the maze: pure functions of
+   * the clock, so they need no state and sit still in a screenshot (t is
+   * fixed there). Drawn late, over the maze, under the HUD.
+   */
+  function drawMotes(t) {
+    const colors = ['#ffd166', '#7ee787', '#f2f7ee', '#ff70a6'];
+    for (let i = 0; i < 26; i += 1) {
+      const drift = t * (6 + (i % 5) * 3);
+      const x = (i * 173.3 + Math.sin(t * 0.4 + i * 1.7) * 26 + drift * 0.4) % FIELD.width;
+      const y = 84 + ((i * 97.7 + drift) % (FIELD.height - 120));
+      const twinkle = 0.25 + 0.45 * (0.5 + 0.5 * Math.sin(t * 1.6 + i * 2.3));
+      context.save();
+      context.globalAlpha = twinkle;
+      circle(x, y, 2 + (i % 3) * 0.7, colors[i % colors.length]);
+      context.restore();
+    }
+  }
+
+  /** A subtle darkening toward the field's edges, for depth. */
+  function drawVignette() {
+    if (vignette === null) {
+      vignette = context.createRadialGradient(640, 320, 280, 640, 360, 780);
+      vignette.addColorStop(0, 'rgba(4, 10, 6, 0)');
+      vignette.addColorStop(1, 'rgba(4, 10, 6, 0.24)');
+    }
+    context.fillStyle = vignette;
+    context.fillRect(0, 0, FIELD.width, FIELD.height);
   }
 
   function drawFloor(state) {
@@ -157,10 +203,26 @@ export function createRenderer(canvas) {
     const x = MAZE_X + (gate.c + 0.5) * TILE;
     const y = MAZE_Y + (gate.r + 0.5) * TILE;
     const pulse = 1 + Math.sin(t * 4) * 0.08;
+    // A wide halo, then the bright core: the open gate should be findable
+    // at a glance from anywhere in the maze.
+    context.save();
+    context.globalAlpha = 0.16 + Math.sin(t * 4) * 0.04;
+    circle(x, y, 52 * pulse, PALETTE.gold);
+    context.restore();
     context.save();
     context.globalAlpha = 0.35 + Math.sin(t * 4) * 0.1;
     circle(x, y, 30 * pulse, PALETTE.gold);
     context.restore();
+    // Three sparkles orbiting the door.
+    for (let i = 0; i < 3; i += 1) {
+      const a = t * 2.2 + (i * Math.PI * 2) / 3;
+      const sx = x + Math.cos(a) * 26;
+      const sy = y + Math.sin(a) * 26;
+      context.save();
+      context.globalAlpha = 0.6 + 0.4 * Math.sin(t * 5 + i * 2);
+      circle(sx, sy, 3, '#fff3b0');
+      context.restore();
+    }
     context.fillStyle = '#3a2b12';
     roundRect(x - 18, y - 22, 36, 44, 10);
     context.fill();
@@ -178,6 +240,7 @@ export function createRenderer(canvas) {
     const bob = Math.sin(t * 3 + p.bob) * 3;
     const x = p.x;
     const y = p.y + bob;
+    drawShadow(p.x, p.y + 15, 15);
     context.save();
     context.globalAlpha = 0.3;
     circle(x, y, 20, POWERUP_INFO[p.type].color);
@@ -243,6 +306,7 @@ export function createRenderer(canvas) {
     const scale = 1 + Math.sin(bomb.pulse * (6 + urgency * 14)) * 0.05 + urgency * 0.08;
     const x = MAZE_X + (bomb.c + 0.5) * TILE;
     const y = MAZE_Y + (bomb.r + 0.5) * TILE;
+    drawShadow(x, y + 15, 16);
     context.save();
     context.translate(x, y);
     context.scale(scale, scale);
@@ -266,9 +330,20 @@ export function createRenderer(canvas) {
   function drawBlasts(state) {
     for (const blast of state.bombs.blasts) {
       const alpha = Math.min(1, blast.timer / 0.55);
+      // The first ~0.1 s of a burst is a white-gold flash over every flame
+      // cell, so the explosion pops instead of just appearing.
+      const age = 0.55 - blast.timer;
+      const flash = age < 0.1 ? (1 - age / 0.1) * 0.85 : 0;
       for (const cell of blast.list) {
         const x = MAZE_X + cell.c * TILE;
         const y = MAZE_Y + cell.r * TILE;
+        const cx = x + TILE / 2;
+        const cy = y + TILE / 2;
+        // A soft glow halo behind the flame cell.
+        context.save();
+        context.globalAlpha = alpha * 0.35;
+        circle(cx, cy, 30, PALETTE.blastMid);
+        context.restore();
         context.save();
         context.globalAlpha = alpha;
         context.fillStyle = PALETTE.blastEdge;
@@ -280,6 +355,12 @@ export function createRenderer(canvas) {
         context.fillStyle = PALETTE.blastCore;
         circle(x + TILE / 2, y + TILE / 2, 9, PALETTE.blastCore);
         context.restore();
+        if (flash > 0) {
+          context.save();
+          context.globalAlpha = flash;
+          circle(cx, cy, 24, '#fffbe6');
+          context.restore();
+        }
       }
     }
   }
@@ -288,6 +369,7 @@ export function createRenderer(canvas) {
     const wobble = Math.sin(e.wobble) * 2;
     const x = e.x;
     const y = e.y + wobble;
+    drawShadow(x, e.y + 16, 17);
     if (e.type === ENEMY_NIBBLER) {
       circle(x, y, 19, '#c25e1e');
       circle(x, y, 17, '#ff8c42');
@@ -351,38 +433,69 @@ export function createRenderer(canvas) {
 
   function drawPlayer(state, t) {
     const p = state.player;
+    // The contact shadow and the hurt ring stay visible even while the
+    // invulnerability blink hides the body itself.
+    drawShadow(p.x, p.y + 17, 17);
+    if (p.hurtFlash > 0) {
+      const flashAlpha = p.hurtFlash / 0.4;
+      context.save();
+      context.globalAlpha = flashAlpha * 0.85;
+      context.strokeStyle = PALETTE.red;
+      context.lineWidth = 4;
+      context.beginPath();
+      context.arc(p.x, p.y, 26, 0, Math.PI * 2);
+      context.stroke();
+      context.restore();
+    }
     if (p.invulnerable > 0 && Math.floor(t * 10) % 2 === 0) return;
     const bob = p.moving ? Math.sin(t * 14) * 2 : Math.sin(t * 3) * 1.5;
-    const x = p.x;
-    const y = p.y + bob;
+    // Squash & stretch along the direction of travel, plus a slight lean
+    // into the run: the sprite feels weighted instead of sliding like a puck.
+    const speedRatio = Math.min(Math.hypot(p.vx, p.vy) / p.speed, 1);
+    const stretch = 1 + 0.10 * speedRatio;
+    const squash = 1 - 0.07 * speedRatio;
+    const horizontal = Math.abs(p.vx) >= Math.abs(p.vy);
+    const lean = Math.max(-1, Math.min(1, p.vx / p.speed)) * 0.09;
+    context.save();
+    context.translate(p.x, p.y + bob);
+    context.rotate(lean);
+    context.scale(horizontal ? stretch : squash, horizontal ? squash : stretch);
     if (p.shield) {
       context.save();
       context.globalAlpha = 0.4;
-      circle(x, y, 28, '#b388ff');
+      circle(0, 0, 28, '#b388ff');
       context.restore();
     }
-    circle(x, y + 2, 19, '#1a8a80');
-    circle(x, y, 18, '#2ec4b6');
-    circle(x, y + 5, 11, '#a7f3d0');
+    circle(0, 2, 19, '#1a8a80');
+    circle(0, 0, 18, '#2ec4b6');
+    circle(0, 5, 11, '#a7f3d0');
     // Leaf hat.
     context.fillStyle = '#57a75a';
     context.beginPath();
-    context.ellipse(x, y - 17, 12, 5, -0.3, 0, Math.PI * 2);
+    context.ellipse(0, -17, 12, 5, -0.3, 0, Math.PI * 2);
     context.fill();
     context.beginPath();
-    context.ellipse(x + 4, y - 20, 9, 4, 0.5, 0, Math.PI * 2);
+    context.ellipse(4, -20, 9, 4, 0.5, 0, Math.PI * 2);
     context.fill();
     const lookX = p.faceX * 2.5;
     const lookY = p.faceY * 2.5;
-    circle(x - 7 + lookX, y - 4 + lookY, 4.5, '#0b140e');
-    circle(x + 7 + lookX, y - 4 + lookY, 4.5, '#0b140e');
-    circle(x - 5.5 + lookX, y - 5.5 + lookY, 1.5, '#f2f7ee');
-    circle(x + 8.5 + lookX, y - 5.5 + lookY, 1.5, '#f2f7ee');
+    circle(-7 + lookX, -4 + lookY, 4.5, '#0b140e');
+    circle(7 + lookX, -4 + lookY, 4.5, '#0b140e');
+    circle(-5.5 + lookX, -5.5 + lookY, 1.5, '#f2f7ee');
+    circle(8.5 + lookX, -5.5 + lookY, 1.5, '#f2f7ee');
     context.strokeStyle = '#0b140e';
     context.lineWidth = 2;
     context.beginPath();
-    context.arc(x + lookX, y + 6 + lookY, 5, 0.15 * Math.PI, 0.85 * Math.PI);
+    context.arc(lookX, 6 + lookY, 5, 0.15 * Math.PI, 0.85 * Math.PI);
     context.stroke();
+    context.restore();
+    // A white flash over the body right after a hit lands.
+    if (p.hurtFlash > 0) {
+      context.save();
+      context.globalAlpha = (p.hurtFlash / 0.4) * 0.3;
+      circle(p.x, p.y + bob, 18, '#ffffff');
+      context.restore();
+    }
   }
 
   function drawEffects(state) {
@@ -476,11 +589,32 @@ export function createRenderer(canvas) {
     text(prompt, FIELD.width / 2, y + h - 26, 18, PALETTE.gold, 'center');
   }
 
-  function drawTitle(state, best) {
+  function drawTitle(state, best, t) {
     // Dim the living maze behind the title so the words read at a glance.
     context.fillStyle = 'rgba(6, 13, 8, 0.55)';
     context.fillRect(0, 72, FIELD.width, FIELD.height - 72);
-    text('BLASTBLOOM', FIELD.width / 2, 132, 72, PALETTE.text, 'center', '800 ');
+    // Petals drifting down over the dimmed maze, behind the words.
+    const petalColors = ['#7ee787', '#ff70a6', '#ffd166', '#f2f7ee'];
+    for (let i = 0; i < 12; i += 1) {
+      const px = (i * 211 + t * 14) % FIELD.width;
+      const py = 80 + ((i * 131 + t * 26) % (FIELD.height - 160));
+      context.save();
+      context.translate(px, py);
+      context.rotate(Math.sin(t * 0.8 + i * 1.3) * 0.9);
+      context.globalAlpha = 0.55;
+      context.fillStyle = petalColors[i % petalColors.length];
+      context.beginPath();
+      context.ellipse(0, 0, 8, 4, 0, 0, Math.PI * 2);
+      context.fill();
+      context.restore();
+    }
+    // The title breathes gently: a slow scale pulse around its centre.
+    const pulse = 1 + Math.sin(t * 2) * 0.015;
+    context.save();
+    context.translate(FIELD.width / 2, 132);
+    context.scale(pulse, pulse);
+    text('BLASTBLOOM', 0, 0, 72, PALETTE.text, 'center', '800 ');
+    context.restore();
     text('Plant blast-seeds. Shatter the hedges. Free the garden.', FIELD.width / 2, 172, 22, PALETTE.leaf, 'center');
     const lines = [
       'WASD / arrows — run through the maze    SPACE — plant a seed',
@@ -593,13 +727,15 @@ export function createRenderer(canvas) {
     if (screen !== SCREEN_TITLE) drawPlayer(state, t);
     else drawPlayer(state, t);
     drawEffects(state);
+    drawMotes(t);
+    drawVignette();
     if (touch !== null && touch.supported) {
       if (screen === SCREEN_PLAY) drawTouchControls(touch);
       if (screen === SCREEN_TITLE || screen === SCREEN_PLAY) drawRotateHint();
     }
     if (screen === SCREEN_TITLE) {
       drawHud(state, best, muted);
-      drawTitle(state, best);
+      drawTitle(state, best, t);
       return;
     }
     drawHud(state, best, muted);
