@@ -28,6 +28,18 @@ export const PLAYER = {
   respawnInvulnerable: 2.5,
 };
 
+/**
+ * Touch controls, in logical coordinates (the same 1280x720 field the rest of
+ * the game uses). The D-pad is a floating joystick: the knob follows the
+ * thumb, so any angle — including diagonals — steers. The BOMB button is a
+ * thumb-sized seed. Both are drawn semi-transparent over the maze corners,
+ * only on touch devices; a desktop browser never sees them.
+ */
+export const TOUCH = {
+  dpad: { x: 185, y: 565, radius: 95, knob: 38, deadZone: 0.22 },
+  bomb: { x: 1100, y: 570, radius: 60 },
+};
+
 export const BOMB = {
   fuse: 2.0,
   blastTime: 0.55,
