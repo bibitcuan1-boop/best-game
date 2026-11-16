@@ -24,6 +24,12 @@ export const PLAYER = {
   speed: 195,
   speedPerBoot: 22,
   maxSpeed: 320,
+  /** How fast the sprite gets up to speed: 1400 px/s^2 reaches top speed in ~0.14 s — quick, not instant. */
+  accel: 1400,
+  /** How fast it stops when the stick/keys let go: quicker than accel, so stopping feels crisp. */
+  decel: 2100,
+  /** Corner assist: how far (px per step) the sprite may slide sideways to slip around a hedge corner while steering diagonally into it. */
+  cornerAssist: 1.5,
   invulnerableAfterHit: 2,
   respawnInvulnerable: 2.5,
 };

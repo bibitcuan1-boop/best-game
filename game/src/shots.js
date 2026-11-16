@@ -31,6 +31,8 @@ export function stageShot(name, world) {
     if (ticking !== null) ticking.fuse = 1.2;
     // A treat on open ground, and three pests placed for the camera.
     state.powerups.push(createPowerup(POWER_RANGE, 12, 5));
+    // The staged moment is frozen, not played: no respawn blink, so Pip is visible.
+    state.player.invulnerable = 0;
     const spots = [{ c: 8, r: 3 }, { c: 10, r: 7 }, { c: 5, r: 7 }];
     state.enemies.forEach((enemy, i) => {
       if (i < spots.length) {
@@ -51,6 +53,7 @@ export function stageShot(name, world) {
     state.stats.enemiesDown = 5;
     for (const enemy of state.enemies) enemy.alive = false;
     state.gate.active = true;
+    state.player.invulnerable = 0;
     state.screen = SCREEN_CLEAR;
     return { screen: SCREEN_CLEAR, best: 2480 };
   }
@@ -63,6 +66,7 @@ export function stageShot(name, world) {
     const at = cellCenter(3, 3);
     state.player.x = at.x;
     state.player.y = at.y;
+    state.player.invulnerable = 0;
     const spots = [{ c: 5, r: 3 }, { c: 7, r: 5 }];
     state.enemies.forEach((enemy, i) => {
       if (i < spots.length) {
@@ -84,6 +88,7 @@ export function stageShot(name, world) {
     state.stats.levelBonus = 1240;
     state.timeLeft = 64;
     for (const enemy of state.enemies) enemy.alive = false;
+    state.player.invulnerable = 0;
     state.screen = SCREEN_WIN;
     return { screen: SCREEN_WIN, best: 6850 };
   }
