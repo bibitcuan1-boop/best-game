@@ -23,6 +23,11 @@ far it grows.
 - **SPACE** — plant a blast-seed (it bursts after ~2 seconds, in a cross)
 - **P / Esc** — pause · **M** — mute · **Enter / click** — menus and buttons
 
+On a phone or tablet, touch controls appear automatically: a virtual
+joystick (bottom left — hold it to run, diagonals included) and a big BOMB
+button (bottom right — tap to plant a seed). All menu buttons are tappable.
+Tip: turn the phone sideways (landscape) for the roomiest view.
+
 Seeds burst in a cross until stone stops them; a hedge in the way shatters
 and stops them too. A flame that touches another seed sets it off at once,
 so chains clear whole rows. You have 3 lives; a blast or a pest's touch costs

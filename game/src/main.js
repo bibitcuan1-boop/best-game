@@ -24,7 +24,7 @@ import {
   EVENT_WALL,
   EVENT_WIN,
 } from './world.js';
-import { ACTION_BOMB, ACTION_CONFIRM, ACTION_MUTE, ACTION_PAUSE, createInput } from './input.js';
+import { ACTION_BOMB, ACTION_CONFIRM, ACTION_MUTE, ACTION_PAUSE, createInput, createTouchState } from './input.js';
 import { createAudio } from './audio.js';
 import {
   buttonAt,
@@ -81,7 +81,8 @@ function runShot(name) {
 }
 
 function runGame() {
-  const input = createInput(canvas);
+  const touch = createTouchState();
+  const input = createInput(canvas, { toLogical: renderer.toLogical, touchState: touch });
   let screen = SCREEN_TITLE;
   let best = readBest();
   let muted = false;
@@ -177,7 +178,7 @@ function runGame() {
     if (pointer === null) return;
     audio.unlock();
     const logical = renderer.toLogical(pointer.x, pointer.y);
-    const hit = buttonAt(screen, logical.x, logical.y);
+    const hit = buttonAt(screen, logical.x, logical.y, touch.supported);
     if (hit === 'mute') {
       muted = audio.toggleMute();
       return;
@@ -242,7 +243,7 @@ function runGame() {
       accumulator -= STEP;
     }
     if (screen !== SCREEN_TITLE && screen !== SCREEN_PLAY) accumulator = 0;
-    renderer.draw(world.state, screen, best, muted, now / 1000);
+    renderer.draw(world.state, screen, best, muted, now / 1000, touch);
   }
 
   // Leaving the tab pauses a running game rather than letting seeds burst unseen.

@@ -3,7 +3,7 @@
 // with the backdrop colour. Every sprite is drawn in code — circles, petals
 // and polygons — so the game needs no image files at all.
 
-import { COLS, FIELD, FONT, MAZE_X, MAZE_Y, PALETTE, ROWS, TILE } from './config.js';
+import { COLS, FIELD, FONT, MAZE_X, MAZE_Y, PALETTE, ROWS, TILE, TOUCH } from './config.js';
 import { TILE_HARD, TILE_SOFT } from './maze.js';
 import { ENEMY_NIBBLER, ENEMY_SNAPPER, ENEMY_WISP } from './enemies.js';
 import { POWER_BOMB, POWER_HEART, POWER_RANGE, POWER_SHIELD, POWER_SPEED, POWERUP_INFO } from './powerups.js';
@@ -27,22 +27,28 @@ export const BUTTONS = {
   pause: { x: 1172, y: 14, w: 42, h: 42 },
 };
 
-function inRect(x, y, rect) {
-  return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
+function inRect(x, y, rect, pad = 0) {
+  return x >= rect.x - pad && x <= rect.x + rect.w + pad && y >= rect.y - pad && y <= rect.y + rect.h + pad;
 }
 
-export function buttonAt(screen, x, y) {
-  if (screen === SCREEN_TITLE && inRect(x, y, BUTTONS.start)) return 'start';
-  if (screen === SCREEN_OVER && inRect(x, y, BUTTONS.again)) return 'again';
-  if (screen === SCREEN_CLEAR && inRect(x, y, BUTTONS.again)) return 'continue';
-  if (screen === SCREEN_PAUSED && inRect(x, y, BUTTONS.resume)) return 'resume';
+/**
+ * Which button a tap lands on, or null. On touch devices every button's hit
+ * area grows by 18 logical pixels, so a thumb lands it even where the game is
+ * scaled small on a phone.
+ */
+export function buttonAt(screen, x, y, touch = false) {
+  const pad = touch ? 18 : 0;
+  if (screen === SCREEN_TITLE && inRect(x, y, BUTTONS.start, pad)) return 'start';
+  if (screen === SCREEN_OVER && inRect(x, y, BUTTONS.again, pad)) return 'again';
+  if (screen === SCREEN_CLEAR && inRect(x, y, BUTTONS.again, pad)) return 'continue';
+  if (screen === SCREEN_PAUSED && inRect(x, y, BUTTONS.resume, pad)) return 'resume';
   if (screen === SCREEN_WIN) {
-    if (inRect(x, y, BUTTONS.againWin)) return 'again';
-    if (inRect(x, y, BUTTONS.endlessWin)) return 'endless';
+    if (inRect(x, y, BUTTONS.againWin, pad)) return 'again';
+    if (inRect(x, y, BUTTONS.endlessWin, pad)) return 'endless';
   }
   if (screen === SCREEN_PLAY) {
-    if (inRect(x, y, BUTTONS.pause)) return 'pause';
-    if (inRect(x, y, BUTTONS.mute)) return 'mute';
+    if (inRect(x, y, BUTTONS.pause, pad)) return 'pause';
+    if (inRect(x, y, BUTTONS.mute, pad)) return 'mute';
   }
   return null;
 }
@@ -489,8 +495,89 @@ export function createRenderer(canvas) {
     text('or press SPACE — click the buttons, or M to mute', FIELD.width / 2, 648, 16, PALETTE.muted, 'center');
   }
 
+  /** The touch controls, drawn only on touch devices: a joystick bottom-left
+   * and a big seed button bottom-right. Semi-transparent so the maze shows
+   * through; the knob follows the thumb and both controls brighten and shrink
+   * a touch while pressed. */
+  function drawTouchControls(touch) {
+    const dpad = TOUCH.dpad;
+    const move = touch.move;
+    context.save();
+    context.globalAlpha = move !== null ? 0.55 : 0.34;
+    circle(dpad.x, dpad.y, dpad.radius, '#0b140e');
+    context.globalAlpha = move !== null ? 0.9 : 0.55;
+    context.strokeStyle = PALETTE.leaf;
+    context.lineWidth = 3;
+    context.beginPath();
+    context.arc(dpad.x, dpad.y, dpad.radius, 0, Math.PI * 2);
+    context.stroke();
+    // Direction chevrons.
+    context.fillStyle = PALETTE.leaf;
+    const chev = 58;
+    const s = 10;
+    const triangles = [
+      [dpad.x, dpad.y - chev, 0, -1], [dpad.x, dpad.y + chev, 0, 1],
+      [dpad.x - chev, dpad.y, -1, 0], [dpad.x + chev, dpad.y, 1, 0],
+    ];
+    for (const [tx, ty, dx, dy] of triangles) {
+      context.beginPath();
+      context.moveTo(tx + dx * s, ty + dy * s);
+      context.lineTo(tx - dy * s - dx * s * 0.4, ty + dx * s - dy * s * 0.4);
+      context.lineTo(tx + dy * s - dx * s * 0.4, ty - dx * s - dy * s * 0.4);
+      context.closePath();
+      context.fill();
+    }
+    // The knob follows the thumb; at rest it sits in the middle.
+    const kx = dpad.x + (move !== null ? move.dx * 44 : 0);
+    const ky = dpad.y + (move !== null ? move.dy * 44 : 0);
+    context.globalAlpha = move !== null ? 0.95 : 0.7;
+    circle(kx, ky, dpad.knob, move !== null ? PALETTE.leaf : '#2c5a38');
+    context.globalAlpha = 0.9;
+    context.strokeStyle = PALETTE.leaf;
+    context.lineWidth = 2;
+    context.beginPath();
+    context.arc(kx, ky, dpad.knob, 0, Math.PI * 2);
+    context.stroke();
+
+    // The BOMB button: a thumb-sized seed that squashes while held.
+    const bomb = TOUCH.bomb;
+    const pressed = touch.bomb !== null;
+    const radius = pressed ? bomb.radius - 7 : bomb.radius;
+    context.globalAlpha = pressed ? 0.95 : 0.6;
+    circle(bomb.x, bomb.y, radius + 6, '#7c2d12');
+    circle(bomb.x, bomb.y, radius, pressed ? '#ffb703' : '#ff8c42');
+    circle(bomb.x - 6, bomb.y - 6, radius * 0.32, '#ffd166');
+    context.strokeStyle = '#14532d';
+    context.lineWidth = 3;
+    context.beginPath();
+    context.moveTo(bomb.x, bomb.y - radius * 0.55);
+    context.quadraticCurveTo(bomb.x + 4, bomb.y - radius - 8, bomb.x + 14, bomb.y - radius - 10);
+    context.stroke();
+    circle(bomb.x + 16, bomb.y - radius - 10, 5, '#7ee787');
+    text('BOMB', bomb.x, bomb.y + radius * 0.62, 17, '#3a2b12', 'center', '800 ');
+    context.restore();
+  }
+
+  /** On a phone held upright, a gentle nudge to turn it sideways. */
+  function drawRotateHint() {
+    if (window.innerWidth >= window.innerHeight) return;
+    const w = 560;
+    const x = (FIELD.width - w) / 2;
+    context.save();
+    context.globalAlpha = 0.85;
+    context.fillStyle = '#12261a';
+    roundRect(x, 84, w, 44, 12);
+    context.fill();
+    context.strokeStyle = PALETTE.hudLine;
+    context.lineWidth = 2;
+    roundRect(x, 84, w, 44, 12);
+    context.stroke();
+    text('📱  Putar HP ke landscape — maze-nya lebih lega', FIELD.width / 2, 113, 19, PALETTE.leaf, 'center');
+    context.restore();
+  }
+
   /** Paint one frame: the field, then the HUD or a panel for the screen. */
-  function draw(state, screen, best, muted, t) {
+  function draw(state, screen, best, muted, t, touch = null) {
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.fillStyle = PALETTE.backdrop;
     context.fillRect(0, 0, canvas.width, canvas.height);
@@ -506,6 +593,10 @@ export function createRenderer(canvas) {
     if (screen !== SCREEN_TITLE) drawPlayer(state, t);
     else drawPlayer(state, t);
     drawEffects(state);
+    if (touch !== null && touch.supported) {
+      if (screen === SCREEN_PLAY) drawTouchControls(touch);
+      if (screen === SCREEN_TITLE || screen === SCREEN_PLAY) drawRotateHint();
+    }
     if (screen === SCREEN_TITLE) {
       drawHud(state, best, muted);
       drawTitle(state, best);
