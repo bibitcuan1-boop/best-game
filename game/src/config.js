@@ -36,10 +36,11 @@ export const PLAYER = {
 
 /**
  * Touch controls, in logical coordinates (the same 1280x720 field the rest of
- * the game uses). The D-pad is a floating joystick: the knob follows the
- * thumb, so any angle — including diagonals — steers. The BOMB button is a
- * thumb-sized seed. Both are drawn semi-transparent over the maze corners,
- * only on touch devices; a desktop browser never sees them.
+ * the game uses). The sizes here are the classic ones; the renderer lays the
+ * controls out dynamically (see render.js `computeTouchLayout`): on a phone
+ * held upright they live in the empty letterbox below the field, and in
+ * landscape they tuck into the field's side margins, so they never cover a
+ * maze cell. A desktop browser never sees them.
  */
 export const TOUCH = {
   dpad: { x: 185, y: 565, radius: 95, knob: 38, deadZone: 0.22 },
