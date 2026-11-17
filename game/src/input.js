@@ -54,6 +54,10 @@ function dist(ax, ay, bx, by) {
  *   Converts canvas CSS pixels to the game's logical coordinates; without it
  *   touch positions are read as logical coordinates directly.
  * @param {object} [options.touchState] The shared state (see createTouchState).
+ * @param {() => {dpad: {x: number, y: number, radius: number}, bomb: {x: number, y: number, radius: number}}} [options.touchLayout]
+ *   Where the controls currently are, in logical coordinates; read at event
+ *   time so a rotation moves the hit areas with the drawing. Without it the
+ *   classic spots from config.js are used.
  */
 export function createInput(canvas, options = {}) {
   const held = new Set();
@@ -61,6 +65,7 @@ export function createInput(canvas, options = {}) {
   let pointer = null;
   const toLogical = options.toLogical ?? ((x, y) => ({ x, y }));
   const touchState = options.touchState ?? createTouchState();
+  const touchLayout = options.touchLayout ?? (() => TOUCH);
 
   window.addEventListener('keydown', (event) => {
     if (UP.has(event.code) || DOWN.has(event.code) || LEFT.has(event.code) || RIGHT.has(event.code)) {
@@ -96,8 +101,9 @@ export function createInput(canvas, options = {}) {
 
   function updateJoystick(touch) {
     const at = touchPoint(touch);
-    let dx = (at.x - TOUCH.dpad.x) / TOUCH.dpad.radius;
-    let dy = (at.y - TOUCH.dpad.y) / TOUCH.dpad.radius;
+    const dpad = touchLayout().dpad;
+    let dx = (at.x - dpad.x) / dpad.radius;
+    let dy = (at.y - dpad.y) / dpad.radius;
     const len = Math.hypot(dx, dy);
     if (len > 1) {
       dx /= len;
@@ -112,12 +118,13 @@ export function createInput(canvas, options = {}) {
       event.preventDefault();
       for (const touch of event.changedTouches) {
         const at = touchPoint(touch);
-        if (dist(at.x, at.y, TOUCH.bomb.x, TOUCH.bomb.y) <= TOUCH.bomb.radius + 12) {
+        const controls = touchLayout();
+        if (dist(at.x, at.y, controls.bomb.x, controls.bomb.y) <= controls.bomb.radius + 12) {
           if (touchState.bomb === null) {
             touchState.bomb = { id: touch.identifier };
             actions |= ACTION_BOMB;
           }
-        } else if (dist(at.x, at.y, TOUCH.dpad.x, TOUCH.dpad.y) <= TOUCH.dpad.radius + 16) {
+        } else if (dist(at.x, at.y, controls.dpad.x, controls.dpad.y) <= controls.dpad.radius + 16) {
           updateJoystick(touch);
         }
         // Any other touch (a menu button, the HUD) is left to pointerdown.

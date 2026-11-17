@@ -82,7 +82,7 @@ function runShot(name) {
 
 function runGame() {
   const touch = createTouchState();
-  const input = createInput(canvas, { toLogical: renderer.toLogical, touchState: touch });
+  const input = createInput(canvas, { toLogical: renderer.toLogical, touchState: touch, touchLayout: () => renderer.touchLayout() });
   let screen = SCREEN_TITLE;
   let best = readBest();
   let muted = false;

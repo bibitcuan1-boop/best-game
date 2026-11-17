@@ -61,6 +61,58 @@ export function createRenderer(canvas) {
   // It is painted in logical coordinates, so one gradient serves every size.
   let vignette = null;
 
+  // Where the touch controls live, in logical coordinates, recomputed on
+  // every resize. The maze spans x MAZE_X..MAZE_X+COLS*TILE; the field's
+  // side margins (82 logical px each) are empty sky, and a portrait phone
+  // has a tall empty letterbox below the field.
+  let layout = { portrait: false, dpad: { ...TOUCH.dpad }, bomb: { ...TOUCH.bomb }, hintY: 84 };
+
+  /**
+   * Portrait phone: the D-pad and BOMB move into the empty letterbox below
+   * the field, sized in CSS pixels so they stay thumb-sized on any phone
+   * (a 95-logical pad would be a 53 CSS px dot at 0.56x). The rotate hint
+   * moves into the empty letterbox above the field, where nothing overlaps
+   * it. Landscape (or a squarish window): the controls tuck into the
+   * field's side margins, clear of every maze cell — the D-pad can no
+   * longer hide the bottom-left corner and BOMB can no longer sit on the
+   * gate's home cell (15, 9).
+   */
+  function computeTouchLayout() {
+    const cssW = window.innerWidth;
+    const cssH = window.innerHeight;
+    const scale = view.cssScale;
+    const fieldBottomCss = view.cssY + FIELD.height * scale;
+    const bottomBarCss = cssH - fieldBottomCss;
+    if (cssH > cssW && bottomBarCss >= 260) {
+      const dpadRadius = 110 / scale;
+      const bombRadius = 72 / scale;
+      const cyCss = (fieldBottomCss + cssH) / 2;
+      return {
+        portrait: true,
+        dpad: {
+          x: (cssW * 0.25 - view.cssX) / scale,
+          y: (cyCss - view.cssY) / scale,
+          radius: dpadRadius,
+          knob: dpadRadius * 0.4,
+        },
+        bomb: {
+          x: (cssW * 0.75 - view.cssX) / scale,
+          y: (cyCss - view.cssY) / scale,
+          radius: bombRadius,
+        },
+        hintY: (view.cssY / 2 - view.cssY) / scale,
+      };
+    }
+    const margin = (FIELD.width - (MAZE_X + COLS * TILE)) / 2;
+    const dpadRadius = Math.min(TOUCH.dpad.radius, margin - 4);
+    return {
+      portrait: false,
+      dpad: { x: MAZE_X / 2, y: 565, radius: dpadRadius, knob: dpadRadius * 0.4 },
+      bomb: { x: FIELD.width - margin, y: 565, radius: TOUCH.bomb.radius },
+      hintY: 84,
+    };
+  }
+
   function resize() {
     // Cap the pixel ratio at 2: on phones with a DPR of 3 the canvas would
     // be 3x the CSS size for no visible gain, and the fill rate triples.
@@ -75,6 +127,7 @@ export function createRenderer(canvas) {
     view.cssScale = Math.min(cssW / FIELD.width, cssH / FIELD.height);
     view.cssX = (cssW - FIELD.width * view.cssScale) / 2;
     view.cssY = (cssH - FIELD.height * view.cssScale) / 2;
+    layout = computeTouchLayout();
   }
 
   function text(value, x, y, size, color, align = 'left', weight = '') {
@@ -629,26 +682,34 @@ export function createRenderer(canvas) {
     text('or press SPACE — click the buttons, or M to mute', FIELD.width / 2, 648, 16, PALETTE.muted, 'center');
   }
 
-  /** The touch controls, drawn only on touch devices: a joystick bottom-left
-   * and a big seed button bottom-right. Semi-transparent so the maze shows
-   * through; the knob follows the thumb and both controls brighten and shrink
-   * a touch while pressed. */
+  /** The touch controls, drawn only on touch devices: a joystick and a big
+   * seed button, at the spots `computeTouchLayout` picked — the letterbox
+   * below the field in portrait, the field's side margins in landscape —
+   * so they never cover a maze cell. Semi-transparent; the knob follows
+   * the thumb and both controls brighten and squash a touch while pressed.
+   * Chevrons, knob travel and strokes scale with the pad size, so the
+   * controls read the same at the portrait letterbox size as at the
+   * classic in-field size. */
   function drawTouchControls(touch) {
-    const dpad = TOUCH.dpad;
+    const dpad = layout.dpad;
+    const bomb = layout.bomb;
+    // Strokes are in logical units: divide by the CSS scale so a 3px ring
+    // stays 3 CSS px on screen instead of shrinking to ~1.7px in portrait.
+    const u = 1 / view.cssScale;
     const move = touch.move;
     context.save();
     context.globalAlpha = move !== null ? 0.55 : 0.34;
     circle(dpad.x, dpad.y, dpad.radius, '#0b140e');
     context.globalAlpha = move !== null ? 0.9 : 0.55;
     context.strokeStyle = PALETTE.leaf;
-    context.lineWidth = 3;
+    context.lineWidth = 3 * u;
     context.beginPath();
     context.arc(dpad.x, dpad.y, dpad.radius, 0, Math.PI * 2);
     context.stroke();
-    // Direction chevrons.
+    // Direction chevrons, placed proportionally so they fit any pad size.
     context.fillStyle = PALETTE.leaf;
-    const chev = 58;
-    const s = 10;
+    const chev = dpad.radius * 0.61;
+    const s = dpad.radius * 0.105;
     const triangles = [
       [dpad.x, dpad.y - chev, 0, -1], [dpad.x, dpad.y + chev, 0, 1],
       [dpad.x - chev, dpad.y, -1, 0], [dpad.x + chev, dpad.y, 1, 0],
@@ -662,51 +723,73 @@ export function createRenderer(canvas) {
       context.fill();
     }
     // The knob follows the thumb; at rest it sits in the middle.
-    const kx = dpad.x + (move !== null ? move.dx * 44 : 0);
-    const ky = dpad.y + (move !== null ? move.dy * 44 : 0);
+    const travel = dpad.radius * 0.46;
+    const kx = dpad.x + (move !== null ? move.dx * travel : 0);
+    const ky = dpad.y + (move !== null ? move.dy * travel : 0);
     context.globalAlpha = move !== null ? 0.95 : 0.7;
     circle(kx, ky, dpad.knob, move !== null ? PALETTE.leaf : '#2c5a38');
     context.globalAlpha = 0.9;
     context.strokeStyle = PALETTE.leaf;
-    context.lineWidth = 2;
+    context.lineWidth = 2 * u;
     context.beginPath();
     context.arc(kx, ky, dpad.knob, 0, Math.PI * 2);
     context.stroke();
 
     // The BOMB button: a thumb-sized seed that squashes while held.
-    const bomb = TOUCH.bomb;
     const pressed = touch.bomb !== null;
-    const radius = pressed ? bomb.radius - 7 : bomb.radius;
+    const radius = pressed ? bomb.radius - 7 * u : bomb.radius;
+    const k = radius / TOUCH.bomb.radius;
     context.globalAlpha = pressed ? 0.95 : 0.6;
-    circle(bomb.x, bomb.y, radius + 6, '#7c2d12');
+    circle(bomb.x, bomb.y, radius + 6 * u, '#7c2d12');
     circle(bomb.x, bomb.y, radius, pressed ? '#ffb703' : '#ff8c42');
-    circle(bomb.x - 6, bomb.y - 6, radius * 0.32, '#ffd166');
+    circle(bomb.x - 6 * k, bomb.y - 6 * k, radius * 0.32, '#ffd166');
     context.strokeStyle = '#14532d';
-    context.lineWidth = 3;
+    context.lineWidth = 3 * u;
     context.beginPath();
     context.moveTo(bomb.x, bomb.y - radius * 0.55);
-    context.quadraticCurveTo(bomb.x + 4, bomb.y - radius - 8, bomb.x + 14, bomb.y - radius - 10);
+    context.quadraticCurveTo(bomb.x + 4 * k, bomb.y - radius - 8 * k, bomb.x + 14 * k, bomb.y - radius - 10 * k);
     context.stroke();
-    circle(bomb.x + 16, bomb.y - radius - 10, 5, '#7ee787');
-    text('BOMB', bomb.x, bomb.y + radius * 0.62, 17, '#3a2b12', 'center', '800 ');
+    circle(bomb.x + 16 * k, bomb.y - radius - 10 * k, 5 * u, '#7ee787');
+    text('BOMB', bomb.x, bomb.y + radius * 0.62, Math.round(radius * 0.28), '#3a2b12', 'center', '800 ');
     context.restore();
   }
 
-  /** On a phone held upright, a gentle nudge to turn it sideways. */
+  /** On a phone held upright, a gentle nudge to turn it sideways. In
+   * portrait it lives in the empty letterbox above the field, rendered at
+   * a readable size, so it can never hide behind the title or cover the
+   * maze's top row (both of which the old in-field spot did). */
   function drawRotateHint() {
     if (window.innerWidth >= window.innerHeight) return;
-    const w = 560;
-    const x = (FIELD.width - w) / 2;
+    const message = '📱  Putar HP ke landscape — maze-nya lebih lega';
     context.save();
     context.globalAlpha = 0.85;
-    context.fillStyle = '#12261a';
-    roundRect(x, 84, w, 44, 12);
-    context.fill();
-    context.strokeStyle = PALETTE.hudLine;
-    context.lineWidth = 2;
-    roundRect(x, 84, w, 44, 12);
-    context.stroke();
-    text('📱  Putar HP ke landscape — maze-nya lebih lega', FIELD.width / 2, 113, 19, PALETTE.leaf, 'center');
+    if (layout.portrait) {
+      const size = Math.round(20 / view.cssScale);
+      context.font = `${size}px ${FONT}`;
+      const w = context.measureText(message).width + size * 2.4;
+      const h = size * 2.4;
+      const x = (FIELD.width - w) / 2;
+      const y = layout.hintY - h / 2;
+      context.fillStyle = '#12261a';
+      roundRect(x, y, w, h, 12 / view.cssScale);
+      context.fill();
+      context.strokeStyle = PALETTE.hudLine;
+      context.lineWidth = 2 / view.cssScale;
+      roundRect(x, y, w, h, 12 / view.cssScale);
+      context.stroke();
+      text(message, FIELD.width / 2, layout.hintY + size * 0.35, size, PALETTE.leaf, 'center');
+    } else {
+      const w = 560;
+      const x = (FIELD.width - w) / 2;
+      context.fillStyle = '#12261a';
+      roundRect(x, 84, w, 44, 12);
+      context.fill();
+      context.strokeStyle = PALETTE.hudLine;
+      context.lineWidth = 2;
+      roundRect(x, 84, w, 44, 12);
+      context.stroke();
+      text(message, FIELD.width / 2, 113, 19, PALETTE.leaf, 'center');
+    }
     context.restore();
   }
 
@@ -730,6 +813,9 @@ export function createRenderer(canvas) {
     drawMotes(t);
     drawVignette();
     if (touch !== null && touch.supported) {
+      // The controls and the hint sit outside the maze: keep them steady
+      // while the field shakes from a blast.
+      context.setTransform(view.scale, 0, 0, view.scale, view.x, view.y);
       if (screen === SCREEN_PLAY) drawTouchControls(touch);
       if (screen === SCREEN_TITLE || screen === SCREEN_PLAY) drawRotateHint();
     }
@@ -786,6 +872,12 @@ export function createRenderer(canvas) {
   window.addEventListener('resize', resize);
   return {
     draw,
+    /** The current touch-control layout, in logical coordinates; the input
+     * module reads it at event time so a rotation re-lays the controls out
+     * without any re-wiring. */
+    touchLayout() {
+      return layout;
+    },
     toLogical(cssX, cssY) {
       return { x: (cssX - view.cssX) / view.cssScale, y: (cssY - view.cssY) / view.cssScale };
     },
